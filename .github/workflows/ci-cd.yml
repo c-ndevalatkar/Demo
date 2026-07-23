@@ -1,0 +1,299 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - master
+      - main
+      - development
+      - 'QA/**'
+      - 'Release/**'
+  pull_request:
+    branches:
+      - master
+      - main
+      - development
+      - 'QA/**'
+      - 'Release/**'
+
+env:
+  JAVA_VERSION: '21'
+  MAVEN_VERSION: '3.9.6'
+  SONAR_HOST_URL: 'http://amzphxdevops01.phx.ndchealth.com:9000'
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: maven
+
+      - name: Build with Maven
+        run: mvn clean compile
+
+  test:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: maven
+
+      - name: Run tests
+        run: mvn test
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: target/surefire-reports/
+
+      - name: Publish test results
+        if: always()
+        uses: EnricoMi/publish-unit-test-result-action@v2
+        with:
+          files: target/surefire-reports/TEST-*.xml
+          check_name: Unit Test Results
+
+  code-quality:
+    name: SonarQube Analysis
+    runs-on: ubuntu-latest
+    needs: test
+    if: |
+      github.event_name == 'push' && 
+      (github.ref == 'refs/heads/development' || 
+       startsWith(github.ref, 'refs/heads/QA/') ||
+       startsWith(github.ref, 'refs/heads/Release/'))
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: maven
+
+      - name: SonarQube Scan
+        run: |
+          mvn verify sonar:sonar \
+            -Dsonar.projectKey=demo1_project \
+            -Dsonar.projectName=demo1 \
+            -Dsonar.host.url=${{ env.SONAR_HOST_URL }} \
+            -Dsonar.token=${{ secrets.SONAR_TOKEN }} \
+            -Dsonar.qualitygate.wait=true
+        continue-on-error: true
+
+  security-scan:
+    name: Security Scanning
+    runs-on: ubuntu-latest
+    needs: test
+    if: |
+      github.event_name == 'push' && 
+      (github.ref == 'refs/heads/development' || 
+       startsWith(github.ref, 'refs/heads/QA/') ||
+       startsWith(github.ref, 'refs/heads/Release/'))
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+        continue-on-error: true
+
+      - name: Upload Trivy results to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: 'trivy-results.sarif'
+        continue-on-error: true
+
+  secret-detection:
+    name: Secret Detection
+    runs-on: ubuntu-latest
+    needs: test
+    if: |
+      github.event_name == 'push' && 
+      (github.ref == 'refs/heads/development' || 
+       startsWith(github.ref, 'refs/heads/QA/') ||
+       startsWith(github.ref, 'refs/heads/Release/'))
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: TruffleHog Secret Scanning
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./
+          base: ${{ github.event.repository.default_branch }}
+          head: HEAD
+          extra_args: --json
+        continue-on-error: true
+
+  package:
+    name: Package Application
+    runs-on: ubuntu-latest
+    needs: [test, security-scan, secret-detection]
+    if: |
+      github.event_name == 'push' && 
+      (github.ref == 'refs/heads/development' || 
+       startsWith(github.ref, 'refs/heads/QA/') ||
+       startsWith(github.ref, 'refs/heads/Release/'))
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: maven
+
+      - name: Build Package
+        run: mvn package -DskipTests
+
+      - name: Create deployment package
+        run: |
+          mkdir -p deploy
+          find target -type f -name "*.jar" -o -name "*.war" | xargs -I {} cp {} deploy/app.jar 2>/dev/null || true
+          if [ ! -f deploy/app.jar ] && [ ! -f deploy/app.war ]; then
+            cp target/demo1-*.jar deploy/app.jar || cp target/demo1-*.war deploy/app.war
+          fi
+          cd deploy && zip -r ../deploy-package.zip . && cd ..
+
+      - name: Upload deployment package
+        uses: actions/upload-artifact@v4
+        with:
+          name: deployment-package
+          path: deploy-package.zip
+          retention-days: 1
+
+  deploy-dev:
+    name: Deploy to Development
+    runs-on: ubuntu-latest
+    needs: package
+    if: |
+      github.event_name == 'push' && 
+      github.ref == 'refs/heads/development'
+    environment:
+      name: development
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download deployment package
+        uses: actions/download-artifact@v4
+        with:
+          name: deployment-package
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: Deploy to Development
+        run: |
+          S3_KEY="demo1/portal_Dev/app/${{ github.sha }}-$(date +'%b-%d-%Y-%H-%M-%S')/deploy-package.zip"
+          echo "Uploading package to S3..."
+          aws s3 cp deploy-package.zip "s3://your-s3-bucket/${S3_KEY}"
+          echo "Deployment package uploaded to S3"
+          # Add AWS CodeDeploy call here if needed
+        continue-on-error: true
+
+  deploy-stage:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    needs: package
+    if: |
+      github.event_name == 'push' && 
+      startsWith(github.ref, 'refs/heads/QA/')
+    environment:
+      name: staging
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download deployment package
+        uses: actions/download-artifact@v4
+        with:
+          name: deployment-package
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Deploy to Staging
+        run: |
+          S3_KEY="demo1/portal_Stage/app/${{ github.sha }}-$(date +'%b-%d-%Y-%H-%M-%S')/deploy-package.zip"
+          echo "Uploading package to S3..."
+          aws s3 cp deploy-package.zip "s3://${{ secrets.STAGE_S3_BUCKET }}/${S3_KEY}"
+          echo "Deployment package uploaded to S3"
+          # Add AWS CodeDeploy call here if needed
+        continue-on-error: true
+
+  deploy-prod:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: package
+    if: |
+      github.event_name == 'push' && 
+      startsWith(github.ref, 'refs/heads/Release/')
+    environment:
+      name: production
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download deployment package
+        uses: actions/download-artifact@v4
+        with:
+          name: deployment-package
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Deploy to Production
+        run: |
+          S3_KEY="demo1/portal_Prod/app/${{ github.sha }}-$(date +'%b-%d-%Y-%H-%M-%S')/deploy-package.zip"
+          echo "Uploading package to S3..."
+          aws s3 cp deploy-package.zip "s3://${{ secrets.PROD_S3_BUCKET }}/${S3_KEY}"
+          echo "Deployment package uploaded to S3"
+          # Add AWS CodeDeploy call here if needed
+        continue-on-error: true
+
