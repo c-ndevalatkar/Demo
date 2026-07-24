@@ -1,303 +1,218 @@
-name: CI/CD Pipeline
+name: CI
 
+# GitLab equivalent notes:
+# - .rules_always  -> any push OR any pull_request (build/unit_test)
+# - .rules_target_branches -> pull_request targeting these branches, OR push to these branches
 on:
   push:
     branches:
       - master
-      - main
       - development
       - 'QA/**'
       - 'Release/**'
   pull_request:
     branches:
       - master
-      - main
       - development
       - 'QA/**'
       - 'Release/**'
 
 env:
-  JAVA_VERSION: '21'
-  MAVEN_VERSION: '3.9.6'
-  SONAR_HOST_URL: 'http://amzphxdevops01.phx.ndchealth.com:9000'
+  MAVEN_OPTS: "-Dmaven.repo.local=${{ github.workspace }}/.m2/repository"
+  SONAR_HOST_URL: "http://amzphxdevops01.phx.ndchealth.com:9000"
 
 jobs:
+  # ---------------------------------------------------------
+  # build_job / unit_test_job -> run on every push + every PR
+  # ---------------------------------------------------------
   build:
-    name: Build
     runs-on: ubuntu-latest
+    container: maven:3.9.6-eclipse-temurin-21
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up JDK 21
-        uses: actions/setup-java@v4
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
         with:
-          java-version: '21'
-          distribution: 'temurin'
-          cache: maven
-
-      - name: Build with Maven
+          path: .m2/repository
+          key: ${{ runner.os }}-m2-${{ github.ref_name }}
+          restore-keys: |
+            ${{ runner.os }}-m2-
+      - name: Build
         run: mvn clean compile
 
-  test:
-    name: Unit Tests
+  unit_test:
     runs-on: ubuntu-latest
+    container: maven:3.9.6-eclipse-temurin-21
     needs: build
     permissions:
       checks: write
       pull-requests: write
       contents: read
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up JDK 21
-        uses: actions/setup-java@v4
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
         with:
-          java-version: '21'
-          distribution: 'temurin'
-          cache: maven
-
+          path: .m2/repository
+          key: ${{ runner.os }}-m2-${{ github.ref_name }}
+          restore-keys: |
+            ${{ runner.os }}-m2-
       - name: Run tests
         run: mvn test
-
-      - name: Upload test results
+      - name: Publish JUnit results
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: test-results
-          path: target/surefire-reports/
+          name: surefire-reports
+          path: target/surefire-reports/TEST-*.xml
 
-      - name: Publish test results
-        if: always()
-        uses: EnricoMi/publish-unit-test-result-action@v2
-        with:
-          files: target/surefire-reports/TEST-*.xml
-          check_name: Unit Test Results
-
-  code-quality:
-    name: SonarQube Analysis
+  # ---------------------------------------------------------
+  # Everything below here only runs for the "target branches"
+  # rule set: PRs into development/QA/*/Release/*, or direct
+  # pushes to those branches.
+  # ---------------------------------------------------------
+  code_quality:
     runs-on: ubuntu-latest
-    needs: test
-    if: |
-      github.event_name == 'push' && 
-      (github.ref == 'refs/heads/development' || 
-       startsWith(github.ref, 'refs/heads/QA/') ||
-       startsWith(github.ref, 'refs/heads/Release/'))
+    container: maven:3.9.6-eclipse-temurin-21
+    needs: unit_test
+    if: >
+      github.event_name == 'pull_request' ||
+      github.ref_name == 'development' ||
+      startsWith(github.ref_name, 'QA/') ||
+      startsWith(github.ref_name, 'Release/')
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
+      - uses: actions/checkout@v4
+      - name: SonarQube analysis
+        continue-on-error: false   # mirrors allow_failure: true
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: >
+          mvn verify sonar:sonar
+          -Dsonar.projectKey=prahs_shs_software-engineering_shs-portal_shs-portal-app-launch_cf7d133e-cda0-4ae0-bcaa-f7450ea4e871
+          -Dsonar.projectName=shs-portal-app-launch
+          -Dsonar.host.url=$SONAR_HOST_URL
+          -Dsonar.token=$SONAR_TOKEN
+          -Dsonar.qualitygate.wait=true
 
-      - name: Set up JDK 21
-        uses: actions/setup-java@v4
+  # ---------------------------------------------------------
+  # semgrep-sast + print_and_fail_on_sast collapsed into one
+  # job since GitHub Actions has no separate "SAST template"
+  # like GitLab's include: template: Security/SAST.
+  # ---------------------------------------------------------
+  sast:
+    runs-on: ubuntu-latest
+    needs: unit_test
+    if: >
+      github.event_name == 'pull_request' ||
+      github.ref_name == 'development' ||
+      startsWith(github.ref_name, 'QA/') ||
+      startsWith(github.ref_name, 'Release/')
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Semgrep
+        run: pip install --break-system-packages semgrep
+      - name: Run Semgrep (JSON report)
+        continue-on-error: false
+        run: semgrep scan --config auto --json --output semgrep-report.json || true
+      - name: Upload SAST report
+        uses: actions/upload-artifact@v4
         with:
-          java-version: '21'
-          distribution: 'temurin'
-          cache: maven
-
-      - name: SonarQube Scan
+          name: semgrep-report
+          path: semgrep-report.json
+      - name: Analyze SAST report and fail on High/Critical
         run: |
-          mvn verify sonar:sonar \
-            -Dsonar.projectKey=demo1_project \
-            -Dsonar.projectName=demo1 \
-            -Dsonar.host.url=${{ env.SONAR_HOST_URL }} \
-            -Dsonar.token=${{ secrets.SONAR_TOKEN }} \
-            -Dsonar.qualitygate.wait=true
-        continue-on-error: true
+          echo "Analyzing SAST report..."
+          if [ -f semgrep-report.json ]; then
+            TOTAL_FINDINGS=$(jq '.results | length' semgrep-report.json)
+            # Semgrep severities are ERROR/WARNING/INFO; treat ERROR as High/Critical
+            FAIL_COUNT=$(jq '[.results[] | select(.extra.severity=="ERROR")] | length' semgrep-report.json)
 
-  security-scan:
-    name: Security Scanning
-    runs-on: ubuntu-latest
-    needs: test
-    if: |
-      github.event_name == 'push' && 
-      (github.ref == 'refs/heads/development' || 
-       startsWith(github.ref, 'refs/heads/QA/') ||
-       startsWith(github.ref, 'refs/heads/Release/'))
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+            if [ "$TOTAL_FINDINGS" -gt 0 ]; then
+              echo "Found total $TOTAL_FINDINGS findings. Printing details below:"
+              echo "======================================================================"
+              jq -r '.results[] | "[Severity: \(.extra.severity)]\nFile: \(.path)\nLine: \(.start.line)\nIssue: \(.check_id)\nDescription: \(.extra.message)\n======================================================================"' semgrep-report.json
 
-      - name: Run Trivy vulnerability scanner
-        uses: aquasecurity/trivy-action@master
-        with:
-          scan-type: 'fs'
-          scan-ref: '.'
-          format: 'sarif'
-          output: 'trivy-results.sarif'
-        continue-on-error: true
-
-      - name: Upload Trivy results to GitHub Security tab
-        uses: github/codeql-action/upload-sarif@v3
-        if: always()
-        with:
-          sarif_file: 'trivy-results.sarif'
-        continue-on-error: true
-
-  secret-detection:
-    name: Secret Detection
-    runs-on: ubuntu-latest
-    needs: test
-    if: |
-      github.event_name == 'push' && 
-      (github.ref == 'refs/heads/development' || 
-       startsWith(github.ref, 'refs/heads/QA/') ||
-       startsWith(github.ref, 'refs/heads/Release/'))
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: TruffleHog Secret Scanning
-        uses: trufflesecurity/trufflehog@main
-        with:
-          path: ./
-          base: ${{ github.event.repository.default_branch }}
-          head: HEAD
-          extra_args: --json
-        continue-on-error: true
-
-  package:
-    name: Package Application
-    runs-on: ubuntu-latest
-    needs: [test, security-scan, secret-detection]
-    if: |
-      github.event_name == 'push' && 
-      (github.ref == 'refs/heads/development' || 
-       startsWith(github.ref, 'refs/heads/QA/') ||
-       startsWith(github.ref, 'refs/heads/Release/'))
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up JDK 21
-        uses: actions/setup-java@v4
-        with:
-          java-version: '21'
-          distribution: 'temurin'
-          cache: maven
-
-      - name: Build Package
-        run: mvn package -DskipTests
-
-      - name: Create deployment package
-        run: |
-          mkdir -p deploy
-          find target -type f -name "*.jar" -o -name "*.war" | xargs -I {} cp {} deploy/app.jar 2>/dev/null || true
-          if [ ! -f deploy/app.jar ] && [ ! -f deploy/app.war ]; then
-            cp target/demo1-*.jar deploy/app.jar || cp target/demo1-*.war deploy/app.war
+              if [ "$FAIL_COUNT" -gt 0 ]; then
+                echo "❌ ERROR: Pipeline failed due to $FAIL_COUNT High/Critical (ERROR) findings!"
+                exit 1
+              else
+                echo "✅ Only Low/Medium findings. Passed safely."
+                exit 0
+              fi
+            else
+              echo "✅ No SAST findings. Good to go!"
+              exit 0
+            fi
+          else
+            echo "✅ No SAST report found. Skipping."
           fi
-          cd deploy && zip -r ../deploy-package.zip . && cd ..
 
-      - name: Upload deployment package
-        uses: actions/upload-artifact@v4
+  # ---------------------------------------------------------
+  # secret_detection + print_and_fail_on_secrets collapsed
+  # into one job using Gitleaks (GitLab's Secret-Detection
+  # template has no direct GitHub equivalent).
+  # ---------------------------------------------------------
+  secret_detection:
+    runs-on: ubuntu-latest
+    needs: unit_test
+    if: >
+      github.event_name == 'pull_request' ||
+      github.ref_name == 'development' ||
+      startsWith(github.ref_name, 'QA/') ||
+      startsWith(github.ref_name, 'Release/')
+    steps:
+      - uses: actions/checkout@v4
         with:
-          name: deployment-package
+          fetch-depth: 0
+      - name: Run Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        continue-on-error: false
+        env:
+          GITLEAKS_ENABLE_UPLOAD_ARTIFACT: true
+          GITLEAKS_ENABLE_SUMMARY: true
+        with:
+          args: detect --report-format json --report-path gitleaks-report.json --exit-code 0
+      - name: Analyze secret detection report
+        run: |
+          echo "Analyzing Secret Detection report..."
+          if [ -f gitleaks-report.json ]; then
+            LEAK_COUNT=$(jq 'length' gitleaks-report.json)
+            if [ "$LEAK_COUNT" -gt 0 ]; then
+              echo "❌ ERROR: $LEAK_COUNT secret(s) leaked in the repository!"
+              echo "=========================================================="
+              jq -r '.[] | "File: \(.File)\nLine: \(.StartLine)\nLeak Type: \(.Description)\n=========================================================="' gitleaks-report.json
+              echo "Please remove the secrets, revoke them, and push again."
+              exit 1
+            else
+              echo "✅ No secrets found. Code is secure."
+              exit 0
+            fi
+          else
+            echo "✅ No secret detection report found. Skipping."
+          fi
+
+  # ---------------------------------------------------------
+  # package_job -> build the WAR + zip, then hand the artifact
+  # to the deploy workflow (jobs run on separate runners here,
+  # so this upload/download step is mandatory, unlike GitLab
+  # where files just persist in the same working directory).
+  # ---------------------------------------------------------
+  package:
+    runs-on: ubuntu-latest
+    container: maven:3.9.6-eclipse-temurin-21
+    needs: [sast, secret_detection]
+    if: >
+      github.event_name == 'pull_request' ||
+      github.ref_name == 'development' ||
+      startsWith(github.ref_name, 'QA/') ||
+      startsWith(github.ref_name, 'Release/')
+    steps:
+      - uses: actions/checkout@v4
+      - name: Package WAR + zip deploy bundle
+        run: |
+          mvn package -DskipTests
+          find target -type f -name "*.war" -exec mv {} target/applaunch.war \;
+          jar -cMf deploy-package.zip target/applaunch.war appspec.yml scripts/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: deploy-package
           path: deploy-package.zip
           retention-days: 1
-
-  deploy-dev:
-    name: Deploy to Development
-    runs-on: ubuntu-latest
-    needs: package
-    if: |
-      github.event_name == 'push' && 
-      github.ref == 'refs/heads/development'
-    environment:
-      name: development
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Download deployment package
-        uses: actions/download-artifact@v4
-        with:
-          name: deployment-package
-
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: us-east-1
-
-      - name: Deploy to Development
-        run: |
-          S3_KEY="demo1/portal_Dev/app/${{ github.sha }}-$(date +'%b-%d-%Y-%H-%M-%S')/deploy-package.zip"
-          echo "Uploading package to S3..."
-          aws s3 cp deploy-package.zip "s3://your-s3-bucket/${S3_KEY}"
-          echo "Deployment package uploaded to S3"
-          # Add AWS CodeDeploy call here if needed
-        continue-on-error: true
-
-  deploy-stage:
-    name: Deploy to Staging
-    runs-on: ubuntu-latest
-    needs: package
-    if: |
-      github.event_name == 'push' && 
-      startsWith(github.ref, 'refs/heads/QA/')
-    environment:
-      name: staging
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Download deployment package
-        uses: actions/download-artifact@v4
-        with:
-          name: deployment-package
-
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ secrets.AWS_REGION }}
-
-      - name: Deploy to Staging
-        run: |
-          S3_KEY="demo1/portal_Stage/app/${{ github.sha }}-$(date +'%b-%d-%Y-%H-%M-%S')/deploy-package.zip"
-          echo "Uploading package to S3..."
-          aws s3 cp deploy-package.zip "s3://${{ secrets.STAGE_S3_BUCKET }}/${S3_KEY}"
-          echo "Deployment package uploaded to S3"
-          # Add AWS CodeDeploy call here if needed
-        continue-on-error: true
-
-  deploy-prod:
-    name: Deploy to Production
-    runs-on: ubuntu-latest
-    needs: package
-    if: |
-      github.event_name == 'push' && 
-      startsWith(github.ref, 'refs/heads/Release/')
-    environment:
-      name: production
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Download deployment package
-        uses: actions/download-artifact@v4
-        with:
-          name: deployment-package
-
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ secrets.AWS_REGION }}
-
-      - name: Deploy to Production
-        run: |
-          S3_KEY="demo1/portal_Prod/app/${{ github.sha }}-$(date +'%b-%d-%Y-%H-%M-%S')/deploy-package.zip"
-          echo "Uploading package to S3..."
-          aws s3 cp deploy-package.zip "s3://${{ secrets.PROD_S3_BUCKET }}/${S3_KEY}"
-          echo "Deployment package uploaded to S3"
-          # Add AWS CodeDeploy call here if needed
-        continue-on-error: true
-
