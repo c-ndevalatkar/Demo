@@ -78,7 +78,7 @@ jobs:
 
   code-quality:
     name: SonarQube Analysis
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     needs: test
     # Run SonarQube on development, master, QA/*, Release/* pushes or when manually triggered
     if: |
