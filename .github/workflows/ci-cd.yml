@@ -4,10 +4,10 @@ on:
   push:
     branches:
       - master
-      - main
-      - development
-      - 'QA/**'
-      - 'Release/**'
+     #  - main
+     # - development
+     # - 'QA/**'
+     # - 'Release/**'
   pull_request:
     branches:
       - master
