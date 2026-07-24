@@ -1,0 +1,110 @@
+package com.symphony.applaunch.exception;
+
+import java.util.NoSuchElementException;
+
+public enum ErrorCode {
+
+    BASE_DB_ERROR(999),
+    USER_ALREADY_EXIST(1000),
+    COMPANY_ALREADY_EXIST(1001),
+    INVALID_TOKEN(1002),
+    EXPIRED_TOKEN(1003),
+    TOKEN_ALREADY_VERIFIED(1004),
+    INVALID_CAPTCHA(1005),
+    INVALID_PASSWORD(1006),
+    FILE_OPERATION_ERROR(1007),
+    UNEXPECTED_ERROR(1008),
+    INSUFFICIENT_PARAMETERS(1009),
+    USER_NOT_FOUND(1010),
+    INVALID_USER_ID(1011),
+    USER_NOT_EXISTS(1068),
+    ACCOUNT_LOCKED(1012),
+    COMPANY_NOT_FOUND(1013),
+    PASSWORD_NOT_ALLOWED(1014),
+    SECURITY_ATTEMPT_LIMIT_EXCEEDED(1015),
+    USER_APPLICATION_NOT_FOUND(1016),
+    ROLE_NAME_NOT_FOUND(1017),
+    COMPANY_INACTIVE(1018),
+    USER_COMPANY_DEACTIVE(1019),
+    USER_INEACTIVE(1020),
+    TOKEN_NOT_VERIFIED(1021),
+    COMPANY_NAME_ALREAY_EXISTS(1022),
+    USER_ROLE_NAME_ALREADY_EXISTS(1023),
+    OBJECT_MAPPER_ERROR(1030),
+    USER_DIMENSION_NOT_FOUND(1031),
+    NO_RECORDS_FOUND(1050),
+    NO_FILTER_CRITERIA_FOUND(1033),
+    NO_APPROVED_RECORDS_FOUND(1034),
+    EMAIL_SENDING_FAILED(1041),
+    AD_ERROR(1042),
+    ACCOUNT_EXPIRED(1043),
+    MENU_ALREADY_EXISTS(1051),
+    APP_ALREADY_EXIST(1044),
+    SHS_APP_NOT_ADDED(1046),
+    MENU_SEQUENCE_ALREADY_EXISTS(1052),
+    MENU_PATH_ALREADY_EXISTS(1053),
+    USER_ALREADY_EXIST_AD(1060),
+    FINANCE_CODE_ALREADY_EXIST(1061),
+    FINANCE_CODE_SELECT(1062),
+    NAME_NOT_ALLOWED_IN_PASSWORD(1063),
+    APP_ALREADY_ASSIGNED(1064),
+    MESSAGE_RECIPIENT_NOT_FOUND(1065),
+    MINIMUM_PASSWORD_LENGTH_NOT_FULFILL(1066),
+    PASSWORD_NOT_SAME_AS_USERNAME(1067),
+    PASSWORD_ATLEASE_ONE_LOWER_CASE(1068),
+    PASSWORD_ATLEASE_ONE_UPPER_CASE(1069),
+    PASSWORD_ATLEASE_ONE_NUMERIC(1070),
+    PASSWORD_ATLEASE_SPECIAL_CHARACHTER(1071),
+    PASSWORD_CONTAIN_DICTIONARY_WORD(1072),
+    PASSWORD_REPEAT_SINGLE_CHARACHTER(1073),
+    PASSWORD_NO_PALINDROME(1074),
+    PASSWORD_AD_EXCEPTION(1075),
+    MULTIPLE_EMAILS(1101),
+    MULTIPLE_AD_USERNAMES(1104),
+    EMAIL_ALREADY_EXIST(1108),
+    IP_ADNAME_ALREADY_EXIST(1109),
+    AD_IP_ALREADY_EXISTS(1110),
+    USERROLE_ALREADY_EXISTS(1111),
+    TOKEN_CREATION_ERROR(1112),
+    TOKEN_VERIFY_ERROR(1113),
+    NOT_AUTH(1116),
+    NO_SPACE_IN_FILENAME(1118),
+    MULTIPLE_LOGIN(4000),
+    OKTA_USER_NOT_AUTH(4001),
+    CONTRACT_EXCEEDS_LIMIT(4002),
+    APPTYPE_NOT_ADDED(4003);
+
+    private final int codeId;
+
+    private ErrorCode(final int codeId) {
+        this.codeId = codeId;
+    }
+
+    public int getCodeId() {
+        return this.codeId;
+    }
+
+    /**
+     * Converts an int value into an ErrorCode
+     *
+     * @param errorCode
+     * @return {@link ErrorCode}
+     */
+    public static ErrorCode getExceptionCode(final int errorCode) {
+
+        ErrorCode eErrorCode = null;
+        for (final ErrorCode status : ErrorCode.values()) {
+            if (status.getCodeId() == errorCode) {
+                eErrorCode = status;
+                break;
+            }
+        }
+        if (null == eErrorCode) {
+            throw new NoSuchElementException("The received code " + errorCode + " is not valid !!!");
+        } else {
+            return eErrorCode;
+        }
+
+    }
+
+}

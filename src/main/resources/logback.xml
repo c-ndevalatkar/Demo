@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- <configuration debug="true"> to get logback logs -->
+<configuration>
+
+	<contextListener class="ch.qos.logback.classic.jul.LevelChangePropagator">
+		<resetJUL>true</resetJUL>
+	</contextListener>
+
+	<appender name="console" class="ch.qos.logback.core.ConsoleAppender">
+		<encoder>
+			<pattern>%d{HH:mm:ss.SSS} %.-1level|%-40.40logger{0}|%msg%n%ex</pattern>
+		</encoder>
+	</appender>
+
+	<appender name="rolling"
+		class="ch.qos.logback.core.rolling.RollingFileAppender">
+		<!-- <file>C:/logs/wellness-log.txt</file> -->  <!-- current active file -->
+		<file>C:/logs/AppLaunch/applaunch.txt</file>
+		<prudent>false</prudent>
+		<rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+			<!-- rollover on a daily basis -->
+			<fileNamePattern>C:/logs/AppLaunch/backup/applaunch-%d{yyyy-MM-dd}.%i.txt</fileNamePattern>
+				<!-- or whenever the file size reaches 200MB -->
+				<maxFileSize>200MB</maxFileSize>
+				<maxHistory>15</maxHistory>
+				<!-- keep 15 days' worth of history -->
+				<totalSizeCap>5GB</totalSizeCap>
+
+		</rollingPolicy>
+		<encoder>
+			<pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%thread] %logger{36} - %msg%n%ex</pattern>
+		</encoder>
+	</appender>
+
+	<!-- THE root element configures the root logger -->
+	<root level="info">
+		<!-- attaching the same appender to multiple loggers will cause logging 
+			output to be duplicated. -->
+		<appender-ref ref="rolling" />
+		<appender-ref ref="console" />
+	</root>
+
+
+	<logger name="com.symphony" level="info" />
+	<logger name="org.springframework" level="info" />
+	 <logger name="org.hibernate" level="info" />
+	<logger name="org.apache.commons" level="info" />
+	<logger name="org.jets3t" level="info" />	
+	<logger name="org.apache" level="ERROR" />
+    <logger name="httpclient" level="ERROR" />
+		
+	<logger name="waffle.servlet.NegotiateSecurityFilter" level="info" />	
+	<logger name="waffle.servlet.spi.SecurityFilterProviderCollection" level="info" />
+	<logger name="waffle.servlet.spi.NegotiateSecurityFilterProvider" level="info" />	
+	<logger name="waffle.servlet.spi.BasicSecurityFilterProvider" level="info" />
+	<logger name="waffle.windows.auth.impl.WindowsAuthProviderImpl" level="info" />
+</configuration>

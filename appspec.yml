@@ -1,0 +1,15 @@
+version: 0.0
+os: windows
+files:
+  - source: \target\applaunch.war
+    destination: C:\Program Files\Apache Software Foundation\Tomcat 11.0\webapps\
+hooks:
+  ApplicationStop:
+    - location: scripts\stop_tomcat.bat
+      timeout: 300
+  BeforeInstall:
+    - location: scripts\clean_old_deployment.bat
+      timeout: 300
+  ApplicationStart:
+    - location: scripts\start_tomcat.bat
+      timeout: 300
