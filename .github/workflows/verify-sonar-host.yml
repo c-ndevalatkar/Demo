@@ -1,0 +1,68 @@
+name: Verify Sonar Host
+
+on:
+  workflow_dispatch:
+
+env:
+  SONAR_HOST_URL: ${{ env.SONAR_HOST_URL }}
+
+jobs:
+  public-runner-check:
+    name: Verify Sonar host from public runner (ubuntu-latest)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Print environment
+        run: |
+          echo "SONAR_HOST_URL=${{ env.SONAR_HOST_URL }}"
+          echo "Runner: $(uname -a)"
+
+      - name: Install DNS tools if needed
+        run: |
+          if ! command -v dig >/dev/null 2>&1; then sudo apt-get update && sudo apt-get install -y dnsutils; fi
+          if ! command -v nslookup >/dev/null 2>&1; then sudo apt-get update && sudo apt-get install -y dnsutils; fi
+
+      - name: DNS lookup
+        run: |
+          echo "===== nslookup results ====="
+          nslookup $(echo ${{ env.SONAR_HOST_URL }} | sed -E 's#https?://##' | sed -E 's#[:/].*##') || true
+          echo "===== dig results ====="
+          dig +short $(echo ${{ env.SONAR_HOST_URL }} | sed -E 's#https?://##' | sed -E 's#[:/].*##') || true
+
+      - name: HTTP HEAD request
+        run: |
+          echo "Attempting HTTP HEAD to ${{ env.SONAR_HOST_URL }}"
+          curl -I --max-time 15 -sS ${{ env.SONAR_HOST_URL }} || true
+
+      - name: TCP port check (using /dev/tcp)
+        shell: bash
+        run: |
+          host=$(echo ${{ env.SONAR_HOST_URL }} | sed -E 's#https?://##' | sed -E 's#[:/].*##')
+          port=$(echo ${{ env.SONAR_HOST_URL }} | sed -E 's#.*:(\d+).*#\1#' | grep -oE '[0-9]\+' || echo 80)
+          echo "Checking TCP connectivity to $host:$port"
+          timeout 5 bash -c "</dev/tcp/$host/$port" && echo OK || echo FAILED || true
+
+  self-hosted-check:
+    name: Verify Sonar host from self-hosted runner
+    runs-on: [self-hosted, internal-runner]
+    if: ${{ github.event_name == 'workflow_dispatch' }}
+    steps:
+      - name: Print environment
+        run: |
+          echo "SONAR_HOST_URL=${{ env.SONAR_HOST_URL }}"
+          hostname
+
+      - name: DNS lookup
+        run: |
+          nslookup $(echo ${{ env.SONAR_HOST_URL }} | sed -E 's#https?://##' | sed -E 's#[:/].*##') || true
+
+      - name: HTTP HEAD request
+        run: |
+          curl -I --max-time 15 -sS ${{ env.SONAR_HOST_URL }} || true
+
+      - name: TCP port check
+        shell: bash
+        run: |
+          host=$(echo ${{ env.SONAR_HOST_URL }} | sed -E 's#https?://##' | sed -E 's#[:/].*##')
+          port=$(echo ${{ env.SONAR_HOST_URL }} | sed -E 's#.*:(\d+).*#\1#' | grep -oE '[0-9]\+' || echo 80)
+          timeout 5 bash -c "</dev/tcp/$host/$port" && echo OK || echo FAILED || true
+
