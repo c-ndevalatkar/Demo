@@ -78,7 +78,7 @@ jobs:
 
   code-quality:
     name: SonarQube Analysis
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, internal-runner]
     needs: test
     # Run SonarQube on  development, master, QA/*, Release/* pushes or when manually triggered
     if: |
@@ -105,6 +105,7 @@ jobs:
           cache: maven
 
       - name: SonarQube Scan
+        shell: bash
         run: |
           mvn verify sonar:sonar \
             -Dsonar.projectKey=demo1_project \
