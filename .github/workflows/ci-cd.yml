@@ -120,6 +120,7 @@ jobs:
     needs: test
     if: >
       github.event_name == 'pull_request' ||
+      github.ref_name == 'master' ||
       github.ref_name == 'development' ||
       startsWith(github.ref_name, 'QA/') ||
       startsWith(github.ref_name, 'Release/')
@@ -168,6 +169,7 @@ jobs:
     needs: test
     if: >
       github.event_name == 'pull_request' ||
+      github.ref_name == 'master' ||
       github.ref_name == 'development' ||
       startsWith(github.ref_name, 'QA/') ||
       startsWith(github.ref_name, 'Release/')
