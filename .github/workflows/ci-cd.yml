@@ -115,9 +115,9 @@ jobs:
             -Dsonar.qualitygate.wait=true
         continue-on-error: true
 
-  security-scanNNN:
+  security-scan:
     runs-on: ubuntu-latest
-    needs: unit_test
+    needs: test
     if: >
       github.event_name == 'pull_request' ||
       github.ref_name == 'development' ||
@@ -163,9 +163,9 @@ jobs:
             echo "✅ No SAST report found. Skipping."
           fi
 
-  secret_detection:
+  secret-detection:
     runs-on: ubuntu-latest
-    needs: unit_test
+    needs: test
     if: >
       github.event_name == 'pull_request' ||
       github.ref_name == 'development' ||
