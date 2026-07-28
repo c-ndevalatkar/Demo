@@ -115,52 +115,92 @@ jobs:
             -Dsonar.qualitygate.wait=true
         continue-on-error: true
 
-  security-scan:
-    name:
+  security-scanNNN:
     runs-on: ubuntu-latest
-    needs: test
-    # temporarily disabled per request
-    if: false
+    needs: unit_test
+    if: >
+      github.event_name == 'pull_request' ||
+      github.ref_name == 'development' ||
+      startsWith(github.ref_name, 'QA/') ||
+      startsWith(github.ref_name, 'Release/')
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Run Trivy vulnerability scanner
-        uses: aquasecurity/trivy-action@master
+      - uses: actions/checkout@v4
+      - name: Install Semgrep
+        run: pip install --break-system-packages semgrep
+      - name: Run Semgrep (JSON report)
+        continue-on-error: false
+        run: semgrep scan --config auto --json --output semgrep-report.json || true
+      - name: Upload SAST report
+        uses: actions/upload-artifact@v4
         with:
-          scan-type: 'fs'
-          scan-ref: '.'
-          format: 'sarif'
-          output: 'trivy-results.sarif'
-        continue-on-error: true
+          name: semgrep-report
+          path: semgrep-report.json
+      - name: Analyze SAST report and fail on High/Critical
+        run: |
+          echo "Analyzing SAST report..."
+          if [ -f semgrep-report.json ]; then
+            TOTAL_FINDINGS=$(jq '.results | length' semgrep-report.json)
+            # Semgrep severities are ERROR/WARNING/INFO; treat ERROR as High/Critical
+            FAIL_COUNT=$(jq '[.results[] | select(.extra.severity=="ERROR")] | length' semgrep-report.json)
 
-      - name: Upload Trivy results to GitHub Security tab
-        uses: github/codeql-action/upload-sarif@v3
-        if: always()
-        with:
-          sarif_file: 'trivy-results.sarif'
-        continue-on-error: true
+            if [ "$TOTAL_FINDINGS" -gt 0 ]; then
+              echo "Found total $TOTAL_FINDINGS findings. Printing details below:"
+              echo "======================================================================"
+              jq -r '.results[] | "[Severity: \(.extra.severity)]\nFile: \(.path)\nLine: \(.start.line)\nIssue: \(.check_id)\nDescription: \(.extra.message)\n======================================================================"' semgrep-report.json
 
-  secret-detection:
-    name: Secret Detection
+              if [ "$FAIL_COUNT" -gt 0 ]; then
+                echo "❌ ERROR: Pipeline failed due to $FAIL_COUNT High/Critical (ERROR) findings!"
+                exit 1
+              else
+                echo "✅ Only Low/Medium findings. Passed safely."
+                exit 0
+              fi
+            else
+              echo "✅ No SAST findings. Good to go!"
+              exit 0
+            fi
+          else
+            echo "✅ No SAST report found. Skipping."
+          fi
+
+  secret_detection:
     runs-on: ubuntu-latest
-    needs: test
-    # temporarily disabled per request
-    if: false
+    needs: unit_test
+    if: >
+      github.event_name == 'pull_request' ||
+      github.ref_name == 'development' ||
+      startsWith(github.ref_name, 'QA/') ||
+      startsWith(github.ref_name, 'Release/')
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
-      - name: TruffleHog Secret Scanning
-        uses: trufflesecurity/trufflehog@main
+      - name: Run Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        continue-on-error: false
+        env:
+          GITLEAKS_ENABLE_UPLOAD_ARTIFACT: true
+          GITLEAKS_ENABLE_SUMMARY: true
         with:
-          path: ./
-          base: ${{ github.event.repository.default_branch }}
-          head: HEAD
-          extra_args: --json
-        continue-on-error: true
+          args: detect --report-format json --report-path gitleaks-report.json --exit-code 0
+      - name: Analyze secret detection report
+        run: |
+          echo "Analyzing Secret Detection report..."
+          if [ -f gitleaks-report.json ]; then
+            LEAK_COUNT=$(jq 'length' gitleaks-report.json)
+            if [ "$LEAK_COUNT" -gt 0 ]; then
+              echo "❌ ERROR: $LEAK_COUNT secret(s) leaked in the repository!"
+              echo "=========================================================="
+              jq -r '.[] | "File: \(.File)\nLine: \(.StartLine)\nLeak Type: \(.Description)\n=========================================================="' gitleaks-report.json
+              echo "Please remove the secrets, revoke them, and push again."
+              exit 1
+            else
+              echo "✅ No secrets found. Code is secure."
+              exit 0
+            fi
+          else
+            echo "✅ No secret detection report found. Skipping."
+          fi
 
   package:
     name: Package Application
