@@ -11,10 +11,10 @@ on:
   pull_request:
     branches:
       - master
-      - main
-      - development
-      - 'QA/**'
-      - 'Release/**'
+      #- main
+      #- development
+      #- 'QA/**'
+      #- 'Release/**'
   workflow_dispatch: {}
 
 env:
