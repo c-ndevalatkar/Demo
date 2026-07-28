@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
 
 env:
-  SONAR_HOST_URL: ${{ env.SONAR_HOST_URL }}
+  SONAR_HOST_URL: 'http://amzphxdevops01.phx.ndchealth.com:9000'
 
 jobs:
   public-runner-check:
