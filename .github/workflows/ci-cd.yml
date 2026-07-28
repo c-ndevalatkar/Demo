@@ -209,8 +209,9 @@ jobs:
     runs-on: ubuntu-latest
     needs: [test, security-scan, secret-detection]
     if: |
-      github.event_name == 'push' && 
-      (github.ref == 'refs/heads/development' || 
+      github.event_name == 'push' &&
+      (github.ref == 'refs/heads/development' ||
+       github.ref == 'refs/heads/master' ||
        startsWith(github.ref, 'refs/heads/QA/') ||
        startsWith(github.ref, 'refs/heads/Release/'))
     steps:
